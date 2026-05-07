@@ -262,12 +262,40 @@
           visit(x, y - 1, currentLabel);
         }
 
+        function floodFillIterative(startX, startY, currentLabel) {
+          const stack = [startX, startY];
+          while (stack.length > 0) {
+            const y = stack.pop();
+            const x = stack.pop();
+            if (x < 0 || y < 0 || x >= width || y >= height) {
+              continue;
+            }
+            const idx = y * width + x;
+            if (!mask[idx] || labels[idx] !== 0) {
+              continue;
+            }
+
+            labels[idx] = currentLabel;
+            stack.push(x + 1, y);
+            stack.push(x - 1, y);
+            stack.push(x, y + 1);
+            stack.push(x, y - 1);
+          }
+        }
+
         for (let y = 0; y < height; y += 1) {
           for (let x = 0; x < width; x += 1) {
             const idx = y * width + x;
             if (mask[idx] && labels[idx] === 0) {
               label += 1;
-              visit(x, y, label);
+              try {
+                visit(x, y, label);
+              } catch (error) {
+                if (!(error instanceof RangeError)) {
+                  throw error;
+                }
+                floodFillIterative(x, y, label);
+              }
             }
           }
         }
