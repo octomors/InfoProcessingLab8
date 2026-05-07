@@ -245,7 +245,7 @@
       function labelRecursive(mask, width, height) {
         const labels = new Uint32Array(mask.length);
         let label = 0;
-        const RECURSION_DEPTH_FALLBACK_THRESHOLD = Math.min(mask.length, 4000);
+        const MAX_RECURSION_DEPTH = Math.min(mask.length, 4000);
         let didFallbackToIterative = false;
 
         function visit(x, y, currentLabel, depth = 0) {
@@ -258,7 +258,7 @@
           }
 
           labels[idx] = currentLabel;
-          if (depth >= RECURSION_DEPTH_FALLBACK_THRESHOLD) {
+          if (depth >= MAX_RECURSION_DEPTH) {
             return false;
           }
 
@@ -280,6 +280,17 @@
 
         function floodFillIterative(startX, startY, currentLabel) {
           const stack = [{ x: startX, y: startY }];
+
+          function tryPush(nextX, nextY) {
+            if (nextX < 0 || nextY < 0 || nextX >= width || nextY >= height) {
+              return;
+            }
+            const nextIdx = nextY * width + nextX;
+            if (mask[nextIdx] && labels[nextIdx] === 0) {
+              stack.push({ x: nextX, y: nextY });
+            }
+          }
+
           while (stack.length > 0) {
             const point = stack.pop();
             const { x, y } = point;
@@ -292,10 +303,10 @@
             }
 
             labels[idx] = currentLabel;
-            stack.push({ x: x + 1, y });
-            stack.push({ x: x - 1, y });
-            stack.push({ x, y: y + 1 });
-            stack.push({ x, y: y - 1 });
+            tryPush(x + 1, y);
+            tryPush(x - 1, y);
+            tryPush(x, y + 1);
+            tryPush(x, y - 1);
           }
         }
 
