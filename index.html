@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Маркировка связных компонент</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Arial, sans-serif;
+      }
+
+      body {
+        margin: 0;
+        padding: 24px;
+        background: #f4f6f8;
+        color: #1f2937;
+      }
+
+      .container {
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        margin-top: 0;
+      }
+
+      .controls {
+        display: grid;
+        gap: 12px;
+        background: white;
+        padding: 16px;
+        border-radius: 10px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      }
+
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        align-items: center;
+      }
+
+      .canvas-grid {
+        margin-top: 16px;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+      }
+
+      .panel {
+        background: white;
+        border-radius: 10px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        padding: 12px;
+      }
+
+      canvas {
+        width: 100%;
+        height: auto;
+        background: #fff;
+        border: 1px solid #d1d5db;
+      }
+
+      button {
+        border: none;
+        border-radius: 8px;
+        padding: 10px 14px;
+        background: #2563eb;
+        color: #fff;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        background: #9ca3af;
+        cursor: not-allowed;
+      }
+
+      .status {
+        font-size: 14px;
+      }
+
+      .hint {
+        color: #4b5563;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Маркировка связных компонент (4-связность)</h1>
+
+      <div class="controls">
+        <div class="row">
+          <label>
+            Загрузите изображение:
+            <input id="imageInput" type="file" accept="image/*" />
+          </label>
+        </div>
+
+        <div class="row">
+          <label for="threshold">Порог бинаризации:</label>
+          <input id="threshold" type="range" min="0" max="255" value="128" />
+          <span id="thresholdValue">128</span>
+          <button id="rebinButton" disabled>Повторить бинаризацию</button>
+        </div>
+
+        <div class="row">
+          <span>Алгоритм маркировки:</span>
+          <label><input type="radio" name="method" value="recursive" checked /> Рекурсивный DFS</label>
+          <label><input type="radio" name="method" value="scanline" /> Построчный (2 прохода)</label>
+          <button id="labelButton" disabled>Выполнить маркировку</button>
+        </div>
+
+        <div class="status" id="status">Загрузите изображение для начала.</div>
+        <div class="hint">
+          Объектами считаются тёмные пиксели после бинаризации. Для каждой компоненты строится собственный цвет.
+        </div>
+      </div>
+
+      <div class="canvas-grid">
+        <div class="panel">
+          <h3>Бинаризованное изображение</h3>
+          <canvas id="binaryCanvas"></canvas>
+        </div>
+        <div class="panel">
+          <h3>Маркированные компоненты</h3>
+          <canvas id="labeledCanvas"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const imageInput = document.getElementById('imageInput');
+      const threshold = document.getElementById('threshold');
+      const thresholdValue = document.getElementById('thresholdValue');
+      const rebinButton = document.getElementById('rebinButton');
+      const labelButton = document.getElementById('labelButton');
+      const statusEl = document.getElementById('status');
+
+      const binaryCanvas = document.getElementById('binaryCanvas');
+      const binaryCtx = binaryCanvas.getContext('2d', { willReadFrequently: true });
+      const labeledCanvas = document.getElementById('labeledCanvas');
+      const labeledCtx = labeledCanvas.getContext('2d');
+
+      const tempCanvas = document.createElement('canvas');
+      const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+
+      let sourceImage = null;
+      let binaryMask = null;
+      let imgWidth = 0;
+      let imgHeight = 0;
+
+      function getSelectedMethod() {
+        return document.querySelector('input[name="method"]:checked').value;
+      }
+
+      function setCanvasesSize(width, height) {
+        binaryCanvas.width = width;
+        binaryCanvas.height = height;
+        labeledCanvas.width = width;
+        labeledCanvas.height = height;
+        tempCanvas.width = width;
+        tempCanvas.height = height;
+      }
+
+      function updateStatus(message) {
+        statusEl.textContent = message;
+      }
+
+      function createDistinctColor(index, total) {
+        const hue = (index * 137.508) % 360;
+        const saturation = 85;
+        const lightness = total > 1 ? 45 + (index % 2) * 10 : 50;
+        return hslToRgb(hue, saturation, lightness);
+      }
+
+      function hslToRgb(h, s, l) {
+        s /= 100;
+        l /= 100;
+        const c = (1 - Math.abs(2 * l - 1)) * s;
+        const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+        const m = l - c / 2;
+        let r = 0;
+        let g = 0;
+        let b = 0;
+
+        if (h < 60) {
+          r = c; g = x; b = 0;
+        } else if (h < 120) {
+          r = x; g = c; b = 0;
+        } else if (h < 180) {
+          r = 0; g = c; b = x;
+        } else if (h < 240) {
+          r = 0; g = x; b = c;
+        } else if (h < 300) {
+          r = x; g = 0; b = c;
+        } else {
+          r = c; g = 0; b = x;
+        }
+
+        return {
+          r: Math.round((r + m) * 255),
+          g: Math.round((g + m) * 255),
+          b: Math.round((b + m) * 255),
+        };
+      }
+
+      function binarizeImage() {
+        if (!sourceImage) {
+          return;
+        }
+
+        tempCtx.clearRect(0, 0, imgWidth, imgHeight);
+        tempCtx.drawImage(sourceImage, 0, 0, imgWidth, imgHeight);
+        const frame = tempCtx.getImageData(0, 0, imgWidth, imgHeight);
+        const pixels = frame.data;
+
+        binaryMask = new Uint8Array(imgWidth * imgHeight);
+        const output = binaryCtx.createImageData(imgWidth, imgHeight);
+        const out = output.data;
+        const t = Number(threshold.value);
+
+        for (let i = 0, p = 0; i < binaryMask.length; i += 1, p += 4) {
+          const r = pixels[p];
+          const g = pixels[p + 1];
+          const b = pixels[p + 2];
+          const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+          const isObject = gray < t ? 1 : 0;
+          binaryMask[i] = isObject;
+          const value = isObject ? 0 : 255;
+          out[p] = value;
+          out[p + 1] = value;
+          out[p + 2] = value;
+          out[p + 3] = 255;
+        }
+
+        binaryCtx.putImageData(output, 0, 0);
+        labeledCtx.clearRect(0, 0, imgWidth, imgHeight);
+        labelButton.disabled = false;
+        updateStatus('Бинаризация завершена. Выберите алгоритм и запустите маркировку.');
+      }
+
+      function labelRecursive(mask, width, height) {
+        const labels = new Uint32Array(mask.length);
+        let label = 0;
+
+        function visit(x, y, currentLabel) {
+          if (x < 0 || y < 0 || x >= width || y >= height) {
+            return;
+          }
+          const idx = y * width + x;
+          if (!mask[idx] || labels[idx] !== 0) {
+            return;
+          }
+
+          labels[idx] = currentLabel;
+          visit(x + 1, y, currentLabel);
+          visit(x - 1, y, currentLabel);
+          visit(x, y + 1, currentLabel);
+          visit(x, y - 1, currentLabel);
+        }
+
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            const idx = y * width + x;
+            if (mask[idx] && labels[idx] === 0) {
+              label += 1;
+              visit(x, y, label);
+            }
+          }
+        }
+
+        return { labels, count: label };
+      }
+
+      function labelScanline(mask, width, height) {
+        const tempLabels = new Uint32Array(mask.length);
+        const relations = [];
+        let maxLabel = 0;
+
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            const idx = y * width + x;
+            if (!mask[idx]) {
+              continue;
+            }
+
+            const leftLabel = x > 0 ? tempLabels[idx - 1] : 0;
+            const upLabel = y > 0 ? tempLabels[idx - width] : 0;
+
+            if (!leftLabel && !upLabel) {
+              maxLabel += 1;
+              tempLabels[idx] = maxLabel;
+            } else if (leftLabel && upLabel) {
+              const minLabel = Math.min(leftLabel, upLabel);
+              const maxSeen = Math.max(leftLabel, upLabel);
+              tempLabels[idx] = minLabel;
+              if (minLabel !== maxSeen) {
+                relations.push([minLabel, maxSeen]);
+              }
+            } else {
+              tempLabels[idx] = leftLabel || upLabel;
+            }
+          }
+        }
+
+        const equivalenceTable = Array.from({ length: maxLabel + 1 }, (_, i) => {
+          const row = new Uint8Array(maxLabel + 1);
+          row[i] = 1;
+          return row;
+        });
+
+        for (const [a, b] of relations) {
+          equivalenceTable[a][b] = 1;
+          equivalenceTable[b][a] = 1;
+        }
+
+        for (let k = 1; k <= maxLabel; k += 1) {
+          for (let i = 1; i <= maxLabel; i += 1) {
+            if (!equivalenceTable[i][k]) {
+              continue;
+            }
+            for (let j = 1; j <= maxLabel; j += 1) {
+              if (equivalenceTable[k][j]) {
+                equivalenceTable[i][j] = 1;
+              }
+            }
+          }
+        }
+
+        const representative = new Uint32Array(maxLabel + 1);
+        for (let i = 1; i <= maxLabel; i += 1) {
+          let rep = i;
+          for (let j = 1; j <= maxLabel; j += 1) {
+            if (equivalenceTable[i][j]) {
+              rep = Math.min(rep, j);
+            }
+          }
+          representative[i] = rep;
+        }
+
+        const compactMap = new Map();
+        let nextClass = 0;
+        const labels = new Uint32Array(mask.length);
+
+        for (let i = 0; i < tempLabels.length; i += 1) {
+          const lbl = tempLabels[i];
+          if (!lbl) {
+            continue;
+          }
+
+          const rep = representative[lbl] || lbl;
+          if (!compactMap.has(rep)) {
+            nextClass += 1;
+            compactMap.set(rep, nextClass);
+          }
+          labels[i] = compactMap.get(rep);
+        }
+
+        return { labels, count: nextClass };
+      }
+
+      function paintLabels(resultLabels, count) {
+        const output = labeledCtx.createImageData(imgWidth, imgHeight);
+        const out = output.data;
+        const colorMap = new Array(count + 1);
+
+        for (let i = 1; i <= count; i += 1) {
+          colorMap[i] = createDistinctColor(i, count);
+        }
+
+        for (let i = 0, p = 0; i < resultLabels.length; i += 1, p += 4) {
+          const label = resultLabels[i];
+          if (!label) {
+            out[p] = 255;
+            out[p + 1] = 255;
+            out[p + 2] = 255;
+            out[p + 3] = 255;
+            continue;
+          }
+          const color = colorMap[label];
+          out[p] = color.r;
+          out[p + 1] = color.g;
+          out[p + 2] = color.b;
+          out[p + 3] = 255;
+        }
+
+        labeledCtx.putImageData(output, 0, 0);
+      }
+
+      function runLabeling() {
+        if (!binaryMask) {
+          updateStatus('Сначала загрузите изображение и выполните бинаризацию.');
+          return;
+        }
+
+        const method = getSelectedMethod();
+        const startedAt = performance.now();
+        const result = method === 'recursive'
+          ? labelRecursive(binaryMask, imgWidth, imgHeight)
+          : labelScanline(binaryMask, imgWidth, imgHeight);
+
+        paintLabels(result.labels, result.count);
+
+        const spentMs = (performance.now() - startedAt).toFixed(1);
+        updateStatus(`Готово: найдено компонент — ${result.count}. Алгоритм: ${method === 'recursive' ? 'Рекурсивный DFS' : 'Построчный (2 прохода)'}; время: ${spentMs} мс.`);
+      }
+
+      imageInput.addEventListener('change', (event) => {
+        const file = event.target.files?.[0];
+        if (!file) {
+          return;
+        }
+
+        const image = new Image();
+        image.onload = () => {
+          sourceImage = image;
+          imgWidth = image.naturalWidth;
+          imgHeight = image.naturalHeight;
+          setCanvasesSize(imgWidth, imgHeight);
+          rebinButton.disabled = false;
+          binarizeImage();
+        };
+        image.onerror = () => {
+          updateStatus('Не удалось загрузить изображение.');
+          sourceImage = null;
+          binaryMask = null;
+          labelButton.disabled = true;
+        };
+
+        image.src = URL.createObjectURL(file);
+      });
+
+      threshold.addEventListener('input', () => {
+        thresholdValue.textContent = threshold.value;
+      });
+
+      rebinButton.addEventListener('click', binarizeImage);
+      labelButton.addEventListener('click', runLabeling);
+    </script>
+  </body>
+</html>
