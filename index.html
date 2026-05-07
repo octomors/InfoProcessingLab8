@@ -245,21 +245,37 @@
       function labelRecursive(mask, width, height) {
         const labels = new Uint32Array(mask.length);
         let label = 0;
+        const MAX_RECURSION_DEPTH = 4000;
+        let didFallbackToIterative = false;
 
-        function visit(x, y, currentLabel) {
+        function visit(x, y, currentLabel, depth = 0) {
           if (x < 0 || y < 0 || x >= width || y >= height) {
-            return;
+            return true;
           }
           const idx = y * width + x;
           if (!mask[idx] || labels[idx] !== 0) {
-            return;
+            return true;
           }
 
           labels[idx] = currentLabel;
-          visit(x + 1, y, currentLabel);
-          visit(x - 1, y, currentLabel);
-          visit(x, y + 1, currentLabel);
-          visit(x, y - 1, currentLabel);
+          if (depth >= MAX_RECURSION_DEPTH) {
+            return false;
+          }
+
+          if (!visit(x + 1, y, currentLabel, depth + 1)) {
+            return false;
+          }
+          if (!visit(x - 1, y, currentLabel, depth + 1)) {
+            return false;
+          }
+          if (!visit(x, y + 1, currentLabel, depth + 1)) {
+            return false;
+          }
+          if (!visit(x, y - 1, currentLabel, depth + 1)) {
+            return false;
+          }
+
+          return true;
         }
 
         function floodFillIterative(startX, startY, currentLabel) {
@@ -288,11 +304,11 @@
             const idx = y * width + x;
             if (mask[idx] && labels[idx] === 0) {
               label += 1;
-              try {
-                visit(x, y, label);
-              } catch (error) {
-                if (!(error instanceof RangeError)) {
-                  throw error;
+              const completedRecursively = visit(x, y, label);
+              if (!completedRecursively) {
+                if (!didFallbackToIterative) {
+                  didFallbackToIterative = true;
+                  console.warn('Рекурсивный DFS достиг лимита глубины и переключился на итеративный обход.');
                 }
                 floodFillIterative(x, y, label);
               }
